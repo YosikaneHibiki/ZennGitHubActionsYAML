@@ -3,43 +3,35 @@ name: Notify Zenn Article Publish
 on:
   push:
     branches:
-      - main  # メインブランチにマージ/プッシュされた時に発火
+      - main
     paths:
-      - 'articles/*.md'  # articlesディレクトリ内のマークダウンのみ監視
+      - 'articles/*.md'
 
 jobs:
   notify-webhooks:
     runs-on: ubuntu-latest
     steps:
-      # 1. リポジトリをチェックアウト（変更検知のために fetch-depth: 2 を指定）
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
 
-      # 2. 今回のプッシュで追加・変更されたファイルを取得する
       - name: Get changed files
         id: changed-files
         uses: tj-actions/changed-files@v42
         with:
           files: articles/*.md
 
-      # 3. 変更された記事をパースしてWebhookを送信
       - name: Send Webhook to Slack and Discord
         if: steps.changed-files.outputs.any_changed == 'true'
         env:
-          # GitHub Secrets からWebhook URLとZennのIDを取得
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           ZENN_USER_ID: ${{ secrets.ZENN_USER_ID }}
         run: |
-          # エラー検知を厳格化（未定義変数・パイプエラーも検知）
           set -euo pipefail
-
-          # 失敗カウンタ（最後にジョブの成否判定に使う）
           ERRORS=0
 
-          # 変更されたすべてのマークダウンファイルをループ処理
           for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
 
             # ファイルが存在しない場合はスキップ（記事が削除されたケース）
@@ -48,30 +40,15 @@ jobs:
               continue
             fi
 
-            # published: true が設定されているか（公開記事か）を判定
-            if ! grep -E -q "^published:\s*true" "$file"; then
+            # published: true が設定されているか判定
+            if ! grep -E -q "^published:[[:space:]]*true" "$file"; then
               echo "Skipped $file (published: false or not set)"
               continue
             fi
 
-            # Front Matterからタイトルを抽出（クォート有無の両方に対応）
-            TITLE=$(awk -F'"' '/^title:/ {print $2}' "$file")
-            if [ -z "$TITLE" ]; then
-              # クォートなしの場合: "title:" を取り除いた残りをそのまま取得
-              TITLE=$(awk '/^title:/ {sub(/^title:[[:space:]]*/, ""); print}' "$file")
-            fi
-
-            # タイトル抽出に失敗した場合は通知を中断
-            if [ -z "$TITLE" ]; then
-              echo "::error::Failed to extract title from $file. Skipping notification."
-              ERRORS=$((ERRORS + 1))
-              continue
-            fi
-
-            # ファイル名から拡張子を除外してスラッグ（URL末尾）を取得
+            # ファイル名から拡張子を除外してスラッグを取得
             FILENAME=$(basename "$file" .md)
 
-            # 必須項目のチェック
             if [ -z "$FILENAME" ] || [ -z "${ZENN_USER_ID:-}" ]; then
               echo "::error::Missing FILENAME or ZENN_USER_ID. Skipping notification for $file."
               ERRORS=$((ERRORS + 1))
@@ -80,7 +57,7 @@ jobs:
 
             ARTICLE_URL="https://zenn.dev/${ZENN_USER_ID}/articles/${FILENAME}"
 
-            # Zenn側で記事が公開されているか確認（最大60秒、10秒間隔でリトライ）
+            # Zenn同期待ち（最大60秒、10秒間隔でリトライ）
             HTTP_STATUS="000"
             for attempt in 1 2 3 4 5 6; do
               HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$ARTICLE_URL" || echo "000")
@@ -91,61 +68,53 @@ jobs:
               sleep 10
             done
 
-            # リトライ後も公開を確認できなかった場合は通知を中断
             if [ "$HTTP_STATUS" != "200" ]; then
               echo "::error::Article not published on Zenn after retries (HTTP $HTTP_STATUS): $ARTICLE_URL"
               ERRORS=$((ERRORS + 1))
               continue
             fi
 
-            echo "Sending notification for: $TITLE"
+            echo "Sending notification for: $ARTICLE_URL"
 
             # --- Slackへの送信処理 ---
             if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
-              # jqでJSONを安全に組み立て（タイトル内の " や \ を自動エスケープ）
               SLACK_PAYLOAD=$(jq -n \
-                --arg title "$TITLE" \
                 --arg url "$ARTICLE_URL" \
-                '{text: ("🎉 新しいZenn記事が公開・更新されました！\n*" + $title + "*\n" + $url)}')
+                '{text: ("🎉 新しいZenn記事が公開・更新されました！\n" + $url)}')
 
               SLACK_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
                 -X POST -H 'Content-type: application/json' \
                 --data "$SLACK_PAYLOAD" \
                 "$SLACK_WEBHOOK_URL" || echo "000")
 
-              # Slackは成功時 200 を返す
               if [ "$SLACK_RESPONSE" != "200" ]; then
-                echo "::error::Slack webhook failed with HTTP $SLACK_RESPONSE for $TITLE"
+                echo "::error::Slack webhook failed with HTTP $SLACK_RESPONSE"
                 ERRORS=$((ERRORS + 1))
               else
-                echo "Slack notification sent successfully for: $TITLE"
+                echo "Slack notification sent successfully"
               fi
             fi
 
             # --- Discordへの送信処理 ---
             if [ -n "${DISCORD_WEBHOOK_URL:-}" ]; then
-              # Discordは text ではなく content フィールドを使用する
               DISCORD_PAYLOAD=$(jq -n \
-                --arg title "$TITLE" \
                 --arg url "$ARTICLE_URL" \
-                '{content: ("🎉 新しいZenn記事が公開・更新されました！\n**" + $title + "**\n" + $url)}')
+                '{content: ("🎉 新しいZenn記事が公開・更新されました！\n" + $url)}')
 
               DISCORD_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
                 -X POST -H 'Content-type: application/json' \
                 --data "$DISCORD_PAYLOAD" \
                 "$DISCORD_WEBHOOK_URL" || echo "000")
 
-              # Discordは成功時 204 No Content を返す
               if [ "$DISCORD_RESPONSE" != "204" ]; then
-                echo "::error::Discord webhook failed with HTTP $DISCORD_RESPONSE for $TITLE"
+                echo "::error::Discord webhook failed with HTTP $DISCORD_RESPONSE"
                 ERRORS=$((ERRORS + 1))
               else
-                echo "Discord notification sent successfully for: $TITLE"
+                echo "Discord notification sent successfully"
               fi
             fi
           done
 
-          # 1件でも失敗があればジョブを失敗扱いにする
           if [ "$ERRORS" -gt 0 ]; then
             echo "::error::$ERRORS notification(s) failed"
             exit 1
