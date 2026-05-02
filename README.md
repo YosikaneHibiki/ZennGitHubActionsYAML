@@ -1,106 +1,96 @@
 # Zenn GitHub Actions YAML
 
-ZennへのCI/CDを自動化するためのGitHub Actions YAML設定集です。
+Zennに記事を公開・更新したとき、SlackおよびDiscordへ自動通知するGitHub Actionsワークフローです。
 
 ---
 
 ## 目次
 
 - [概要](#概要)
-- [機能](#機能)
-- [クイックスタート](#クイックスタート)
+- [動作条件](#動作条件)
+- [Secrets の設定](#secrets-の設定)
 - [ワークフロー一覧](#ワークフロー一覧)
-- [設定例](#設定例)
-- [コントリビューション](#コントリビューション)
+- [クイックスタート](#クイックスタート)
 - [ライセンス](#ライセンス)
 
 ---
 
 ## 概要
 
-このリポジトリには、開発ワークフローを自動化するための各種YAML設定ファイルが収録されています。ビルド・テスト・デプロイ・通知などをGitHub Actionsで一元管理できます。
+`articles/` 配下の Markdown ファイルが `main` ブランチにプッシュされると、自動的にSlack・Discordへ通知を送ります。
+
+```
+mainブランチへpush（articles/*.md）
+  └─ published: true の記事だけを対象に通知
+       ├─ Zenn同期完了を確認（最大60秒リトライ）
+       ├─ Slack へ通知
+       └─ Discord へ通知
+```
 
 ---
 
-## 機能
+## 動作条件
 
-| 機能 | 説明 |
-|------|------|
-| **継続的インテグレーション (CI)** | プッシュ・PR時にコードを自動ビルド＆テスト |
-| **継続的デリバリー (CD)** | テスト通過後、本番環境へ自動デプロイ |
-| **通知** | ビルド・デプロイの結果をリアルタイム通知 |
+通知が送信されるのは以下をすべて満たした場合です。
+
+1. `main` ブランチへ `push` した
+2. `articles/` 配下の `.md` ファイルが変更された
+3. 記事のフロントマターに `published: true` が設定されている
+
+```yaml
+---
+title: "記事タイトル"
+published: true   # ← これが必要
+---
+```
 
 ---
 
-## クイックスタート
+## Secrets の設定
 
-### 1. リポジトリをクローン
+GitHubリポジトリの **Settings → Secrets and variables → Actions** で以下を登録してください。
 
-```bash
-git clone https://github.com/YosikaneHibiki/ZennGitHubActionsYAML.git
-cd ZennGitHubActionsYAML
-```
+| Secret名 | 必須 | 説明 |
+|----------|:----:|------|
+| `ZENN_USER_ID` | 必須 | ZennのユーザーID（例: `your_zenn_id`） |
+| `SLACK_WEBHOOK_URL` | 任意 | Slack Incoming Webhook URL |
+| `DISCORD_WEBHOOK_URL` | 任意 | Discord Webhook URL |
 
-### 2. 依存関係をインストール
+> SlackとDiscordはどちらか一方だけでも動作します。
 
-```bash
-npm install
-```
+### Slack Webhook URLの取得方法
 
-### 3. ワークフローを有効化
+1. [Slack API](https://api.slack.com/apps) でAppを作成
+2. **Incoming Webhooks** を有効化
+3. 通知先チャンネルを選択してWebhook URLをコピー
 
-`.github/workflows/` 配下のYAMLファイルをリポジトリにプッシュするだけで自動的に有効になります。
+### Discord Webhook URLの取得方法
+
+1. 通知先チャンネルの **設定 → 連携サービス → ウェブフック**
+2. **新しいウェブフック** を作成してURLをコピー
 
 ---
 
 ## ワークフロー一覧
 
-| ワークフロー名 | トリガー | 説明 |
-|---------------|---------|------|
-| CI | `push` / `pull_request` | テストを自動実行 |
-| CD | `push` (mainブランチ) | 本番環境へ自動デプロイ |
+| ファイル名 | 説明 | 詳細 |
+|-----------|------|------|
+| [`notify-zenn.yml`](.github/workflows/notify-zenn.yml) | Zenn記事公開時にSlack・Discord通知 | [解説ドキュメント](notify-zenn.md) |
 
 ---
 
-## 設定例
+## クイックスタート
 
-### CI ワークフロー (`ci.yml`)
+```bash
+# 1. リポジトリをクローン
+git clone https://github.com/YosikaneHibiki/ZennGitHubActionsYAML.git
+cd ZennGitHubActionsYAML
 
-```yaml
-name: CI
+# 2. Secretsを設定（GitHub上で行う）
+#    ZENN_USER_ID / SLACK_WEBHOOK_URL / DISCORD_WEBHOOK_URL
 
-on:
-  push:
-    branches:
-      - main
-  pull_request:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Dependencies
-        run: npm install
-
-      - name: Run Tests
-        run: npm test
+# 3. articles/ に記事を追加して push するだけで通知が届く
 ```
-
----
-
-## コントリビューション
-
-コントリビューションを歓迎します！  
-プルリクエストを送る前に [コントリビューションガイドライン](CONTRIBUTING.md) をご確認ください。
-
-1. このリポジトリをフォーク
-2. フィーチャーブランチを作成 (`git checkout -b feature/your-feature`)
-3. 変更をコミット (`git commit -m 'Add your feature'`)
-4. ブランチをプッシュ (`git push origin feature/your-feature`)
-5. プルリクエストを作成
 
 ---
 
